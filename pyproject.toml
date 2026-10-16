@@ -4,12 +4,15 @@ requires-python = ">=3.10,<3.15"
 version = "0.1.0"
 dependencies = [
     "dagster==1.13.26",
+    "dagster-postgres>=0.29.26",
+    "dagster-webserver>=1.13.26",
+    "psycopg[binary]>=3.3.6",
+    "sqlalchemy<2.1",
 ]
 
 [dependency-groups]
 dev = [
     "dagster-dg-cli",
-    "dagster-webserver",
 ]
 
 [build-system]

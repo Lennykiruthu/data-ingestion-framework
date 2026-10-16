@@ -1,0 +1,6 @@
+.git
+.venv
+.env
+.dagster_home
+.tmp_dagster_home_*
+**/__pycache__
