@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16
+    container_name: dif-postgres
+    environment:
+      POSTGRES_USER: ${PG_ADMIN_USER:?set in .env}
+      POSTGRES_PASSWORD: ${PG_ADMIN_PASSWORD:?set in .env}
+      POSTGRES_DB: ${PG_DB:?set in .env}
+      APP_DB_USER: ${APP_DB_USER:?set in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+      DAGSTER_PG_USER: ${DAGSTER_PG_USER:?set in .env}
+      DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD:?set in .env}
+      DAGSTER_PG_DB: ${DAGSTER_PG_DB:?set in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_ADMIN_USER} -d ${PG_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  dagster-webserver:
+    build: .
+    container_name: dif-dagster-webserver
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-m", "dagster_ingestion.definitions"]
+    environment:
+      DAGSTER_PG_HOST: db
+      DAGSTER_PG_USER: ${DAGSTER_PG_USER}
+      DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD}
+      DAGSTER_PG_DB: ${DAGSTER_PG_DB}
+    ports:
+      - "127.0.0.1:3001:3000"      # 3001 so it doesn't clash with `dg dev` on 3000
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 700m
+    restart: unless-stopped
+
+volumes:
+  pgdata:
