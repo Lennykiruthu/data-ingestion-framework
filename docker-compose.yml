@@ -1,3 +1,16 @@
+# Shared by the webserver and the daemon: both run user code, so both need the same settings.
+x-dagster-env: &dagster-env
+  DAGSTER_PG_HOST: db
+  DAGSTER_PG_USER: ${DAGSTER_PG_USER}
+  DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD}
+  DAGSTER_PG_DB: ${DAGSTER_PG_DB}
+  # the ingestion code connects as the least-privileged app role
+  APP_DB_HOST: db
+  PG_DB: ${PG_DB}
+  APP_DB_USER: ${APP_DB_USER}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+  FRED_API_KEY: ${FRED_API_KEY:?set in .env}
+
 services:
   db:
     image: postgres:16
@@ -11,11 +24,12 @@ services:
       DAGSTER_PG_USER: ${DAGSTER_PG_USER:?set in .env}
       DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD:?set in .env}
       DAGSTER_PG_DB: ${DAGSTER_PG_DB:?set in .env}
+      GRAFANA_RO_PASSWORD: ${GRAFANA_RO_PASSWORD:?set in .env}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d:ro
+      - ./sql:/docker-entrypoint-initdb.d:ro   # *.sh run on FIRST init only; schema/ is applied by 002_schema.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PG_ADMIN_USER} -d ${PG_DB}"]
       interval: 5s
@@ -27,18 +41,60 @@ services:
     build: .
     container_name: dif-dagster-webserver
     command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-m", "dagster_ingestion.definitions"]
-    environment:
-      DAGSTER_PG_HOST: db
-      DAGSTER_PG_USER: ${DAGSTER_PG_USER}
-      DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD}
-      DAGSTER_PG_DB: ${DAGSTER_PG_DB}
+    environment: *dagster-env
     ports:
       - "127.0.0.1:3001:3000"      # 3001 so it doesn't clash with `dg dev` on 3000
+    volumes:
+      # Runs launched by the daemon write their logs here; the webserver must see the same files.
+      - dagster_storage:/opt/dagster/home/storage
     depends_on:
       db:
         condition: service_healthy
     mem_limit: 700m
     restart: unless-stopped
 
+  # Without the daemon nothing fires: schedules, sensors and the run queue all live here.
+  dagster-daemon:
+    build: .
+    container_name: dif-dagster-daemon
+    command: ["dagster-daemon", "run", "-m", "dagster_ingestion.definitions"]
+    environment: *dagster-env
+    volumes:
+      - dagster_storage:/opt/dagster/home/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 900m
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:${GRAFANA_VERSION:?pin an exact version in .env}
+    container_name: dif-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS:-false}   # true only for the public server
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline-health.json
+      # read by the provisioning file (infra/grafana/provisioning/datasources/postgres.yaml)
+      PG_DB: ${PG_DB}
+      GRAFANA_RO_PASSWORD: ${GRAFANA_RO_PASSWORD}
+    ports:
+      - "127.0.0.1:3002:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana        # named volume: no host-permission headaches
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 300m
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  dagster_storage:
+  grafana_data:

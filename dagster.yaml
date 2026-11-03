@@ -6,3 +6,10 @@ storage:
       hostname: { env: DAGSTER_PG_HOST }
       db_name:  { env: DAGSTER_PG_DB }
       port: 5432
+
+# Protect the box: a backfill can queue, but at most 3 runs execute at once.
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 3
